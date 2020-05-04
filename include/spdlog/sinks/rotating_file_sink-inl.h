@@ -28,11 +28,15 @@ SPDLOG_INLINE rotating_file_sink<Mutex>::rotating_file_sink(
     filename_t base_filename,
     std::size_t max_size,
     std::size_t max_files,
+    uid_t uid,
+    gid_t gid,
     bool rotate_on_open,
     const file_event_handlers &event_handlers)
     : base_filename_(std::move(base_filename)),
       max_size_(max_size),
       max_files_(max_files),
+      uid_(uid),
+      gid_(gid),
       file_helper_{event_handlers} {
     if (max_size == 0) {
         throw_spdlog_ex("rotating sink constructor: max_size arg cannot be zero");
@@ -43,6 +47,7 @@ SPDLOG_INLINE rotating_file_sink<Mutex>::rotating_file_sink(
     }
     file_helper_.open(calc_filename(base_filename_, 0));
     current_size_ = file_helper_.size();  // expensive. called only once
+    set_file_ownership(calc_filename(base_filename_, 0));
     if (rotate_on_open && current_size_ > 0) {
         rotate_();
         current_size_ = 0;
@@ -121,13 +126,17 @@ SPDLOG_INLINE void rotating_file_sink<Mutex>::rotate_() {
                 file_helper_.reopen(
                     true);  // truncate the log file anyway to prevent it to grow beyond its limit!
                 current_size_ = 0;
+                auto last_error = errno;
+                set_file_ownership(calc_filename(base_filename_, 0));
                 throw_spdlog_ex("rotating_file_sink: failed renaming " + filename_to_str(src) +
                                     " to " + filename_to_str(target),
-                                errno);
+                                last_error);
             }
         }
+        set_file_ownership(target);
     }
     file_helper_.reopen(true);
+    set_file_ownership(calc_filename(base_filename_, 0));
 }
 
 // delete the target if exists, and rename the src file  to target

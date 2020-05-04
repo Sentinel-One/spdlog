@@ -9,6 +9,7 @@
 #error "spdlog.h must be included before this file."
 #endif
 
+#include <unistd.h>
 #include "spdlog/details/file_helper.h"
 #include "spdlog/details/null_mutex.h"
 #include "spdlog/fmt/fmt.h"
@@ -31,13 +32,16 @@ template<typename Mutex>
 class rotating_file_sink final : public base_sink<Mutex>
 {
 public:
-    rotating_file_sink(filename_t base_filename, std::size_t max_size, std::size_t max_files)
+    rotating_file_sink(filename_t base_filename, std::size_t max_size, std::size_t max_files, uid_t uid = -1, gid_t gid = -1)
         : base_filename_(std::move(base_filename))
         , max_size_(max_size)
         , max_files_(max_files)
+        , uid_ (uid)
+        , gid_ (gid)
     {
         file_helper_.open(calc_filename(base_filename_, 0));
         current_size_ = file_helper_.size(); // expensive. called only once
+        set_file_ownership(calc_filename(base_filename_, 0));
     }
 
     // calc filename according to index and file extension if exists.
@@ -106,12 +110,16 @@ private:
                 {
                     file_helper_.reopen(true); // truncate the log file anyway to prevent it to grow beyond its limit!
                     current_size_ = 0;
+                    auto last_error = errno;
+                    set_file_ownership(calc_filename(base_filename_, 0));
                     throw spdlog_ex(
-                        "rotating_file_sink: failed renaming " + filename_to_str(src) + " to " + filename_to_str(target), errno);
+                        "rotating_file_sink: failed renaming " + filename_to_str(src) + " to " + filename_to_str(target), last_error);
                 }
             }
+            set_file_ownership(target);
         }
         file_helper_.reopen(true);
+        set_file_ownership(calc_filename(base_filename_, 0));
     }
 
     // delete the target if exists, and rename the src file  to target
@@ -123,11 +131,21 @@ private:
         return details::os::rename(src_filename, target_filename) == 0;
     }
 
+    void set_file_ownership(filename_t filename)
+    {
+        if (chown(filename.data(), uid_, gid_) < 0) {
+            throw spdlog_ex(
+                "set_file_ownership: failed changing file ownership " + details::os::filename_to_str(filename), errno);
+        }
+    }
+
     filename_t base_filename_;
     std::size_t max_size_;
     std::size_t max_files_;
     std::size_t current_size_;
     details::file_helper file_helper_;
+    uid_t uid_;
+    gid_t gid_;
 };
 
 using rotating_file_sink_mt = rotating_file_sink<std::mutex>;
@@ -141,9 +159,9 @@ using rotating_file_sink_st = rotating_file_sink<details::null_mutex>;
 
 template<typename Factory = default_factory>
 inline std::shared_ptr<logger> rotating_logger_mt(
-    const std::string &logger_name, const filename_t &filename, size_t max_file_size, size_t max_files)
+    const std::string &logger_name, const filename_t &filename, size_t max_file_size, size_t max_files, uid_t uid = -1, gid_t gid = -1)
 {
-    return Factory::template create<sinks::rotating_file_sink_mt>(logger_name, filename, max_file_size, max_files);
+    return Factory::template create<sinks::rotating_file_sink_mt>(logger_name, filename, max_file_size, max_files, uid, gid);
 }
 
 template<typename Factory = default_factory>

@@ -10,6 +10,7 @@
 
 #include <mutex>
 #include <string>
+#include <unistd.h>
 
 namespace spdlog {
 namespace sinks {
@@ -24,6 +25,8 @@ public:
     rotating_file_sink(filename_t base_filename,
                        std::size_t max_size,
                        std::size_t max_files,
+                       uid_t uid = -1,
+                       gid_t gid = -1,
                        bool rotate_on_open = false,
                        const file_event_handlers &event_handlers = {});
     static filename_t calc_filename(const filename_t &filename, std::size_t index);
@@ -50,10 +53,20 @@ private:
     // return true on success, false otherwise.
     bool rename_file_(const filename_t &src_filename, const filename_t &target_filename);
 
+    void set_file_ownership(filename_t filename)
+    {
+        if (chown(filename.data(), uid_, gid_) < 0) {
+            throw spdlog_ex(
+                "set_file_ownership: failed changing file ownership " + details::os::filename_to_str(filename), errno);
+        }
+    }
+
     filename_t base_filename_;
     std::size_t max_size_;
     std::size_t max_files_;
     std::size_t current_size_;
+    uid_t uid_;
+    gid_t gid_;
     details::file_helper file_helper_;
 };
 
@@ -70,10 +83,12 @@ std::shared_ptr<logger> rotating_logger_mt(const std::string &logger_name,
                                            const filename_t &filename,
                                            size_t max_file_size,
                                            size_t max_files,
+                                           uid_t uid = -1,
+                                           gid_t gid = -1,
                                            bool rotate_on_open = false,
                                            const file_event_handlers &event_handlers = {}) {
     return Factory::template create<sinks::rotating_file_sink_mt>(
-        logger_name, filename, max_file_size, max_files, rotate_on_open, event_handlers);
+        logger_name, filename, max_file_size, max_files, uid, gid, rotate_on_open, event_handlers);
 }
 
 template <typename Factory = spdlog::synchronous_factory>
